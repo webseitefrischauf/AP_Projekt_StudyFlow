@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import streamlit as st
 
-st.title("StudyFlow")
+st.title("Studyflow")
 st.write("Trage deine Aufgaben ein")
 
 DATEI = "ausgaben.csv"
