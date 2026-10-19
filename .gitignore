@@ -1,0 +1,21 @@
+# Dateien, die NICHT ins Repository gehören
+
+# die Datenbank mit euren Testdaten (entsteht beim Start automatisch)
+studyflow.db
+
+# hochgeladene Dateien (der leere Ordner bleibt über uploads/.gitkeep erhalten)
+uploads/*
+!uploads/.gitkeep
+
+# alte CSV-Datei aus der ersten app.py
+*.csv
+
+# von Python automatisch erzeugt
+__pycache__/
+*.pyc
+
+# virtuelle Umgebung und Editor-Einstellungen
+.venv/
+venv/
+.vscode/
+.DS_Store
