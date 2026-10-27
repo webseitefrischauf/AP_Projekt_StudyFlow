@@ -1,0 +1,12 @@
+# Datenbank & Uploads gehören nicht ins Git (sonst Merge-Konflikte)
+studyflow.db
+uploads/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Mac
+.DS_Store
