@@ -109,11 +109,56 @@ def dashboard_seite():
     faecher = faecher_dropdown_daten()
 
     eintraege = db.eintraege_laden(benutzer_id)
-    if not eintraege:
-        st.info("Du hast noch keine Einträge. Lege links unter „Neuer Eintrag“ einen an.")
+    ueberfaellige = [e for e in eintraege if ist_ueberfaellig(e)]
 
-    for eintrag in eintraege:
-        eintrag_anzeigen(eintrag, kategorien, faecher)
+    tab_alle, tab_ueberfaellig = st.tabs(
+        ["Alle Einträge", f"⚠️ Überfällig ({len(ueberfaellige)})"]
+    )
+
+    # Ein überfälliger Eintrag steht in beiden Reitern. Damit seine Widgets
+    # trotzdem eindeutige keys haben, bekommt eintrag_anzeigen den Reiter
+    # als "bereich" mit, der vor jeden key gesetzt wird.
+    with tab_alle:
+        if not eintraege:
+            st.info("Du hast noch keine Einträge. Lege links unter „Neuer Eintrag“ einen an.")
+        for eintrag in eintraege:
+            eintrag_anzeigen(eintrag, kategorien, faecher, "alle")
+
+    with tab_ueberfaellig:
+        if not ueberfaellige:
+            st.success("Super, du hast keine überfälligen Aufgaben!")
+        for eintrag in ueberfaellige:
+            eintrag_anzeigen(eintrag, kategorien, faecher, "ueberfaellig")
+
+
+def ist_ueberfaellig(eintrag):
+    """True, wenn der Eintrag nicht erledigt ist und die Deadline vor heute liegt.
+
+    Text-Vergleich reicht: '2026-10-31' < '2026-11-02' stimmt, weil das
+    Format JJJJ-MM-TT wie ein Datum sortiert.
+    """
+    return (
+        not eintrag["erledigt"]
+        and eintrag["deadline"] is not None
+        and eintrag["deadline"] < date.today().isoformat()
+    )
+
+
+# Alle Reiter, in denen ein Eintrag angezeigt werden kann (siehe erledigt_geaendert)
+BEREICHE = ["alle", "ueberfaellig"]
+
+
+def erledigt_geaendert(eintrag_id, key):
+    """Wird von Streamlit aufgerufen, sobald ein Erledigt-Haken geklickt wird."""
+    db.eintrag_erledigt_setzen(eintrag_id, st.session_state["benutzer_id"], st.session_state[key])
+
+    # Steht derselbe Eintrag auch im anderen Reiter, würde sich dessen Checkbox
+    # noch den alten Zustand merken. Wir löschen ihn, damit sie beim Neuladen
+    # wieder den Wert aus der Datenbank übernimmt.
+    for bereich in BEREICHE:
+        anderer_key = f"{bereich}_erledigt_{eintrag_id}"
+        if anderer_key != key and anderer_key in st.session_state:
+            del st.session_state[anderer_key]
 
 
 def neuer_eintrag_seite():
@@ -200,10 +245,15 @@ def fach_label(name, farbe):
     return f'<span style="color:{farbe or "#888888"}">●</span> {html.escape(name)}'
 
 
-def eintrag_anzeigen(eintrag, kategorien, faecher):
-    """Zeigt einen Eintrag als Kästchen mit Erledigt-Haken, Bearbeiten und Löschen."""
+def eintrag_anzeigen(eintrag, kategorien, faecher, bereich):
+    """Zeigt einen Eintrag als Kästchen mit Erledigt-Haken, Bearbeiten und Löschen.
+
+    bereich ist der Reiter ("alle" oder "ueberfaellig") und kommt vor jeden key.
+    """
     benutzer_id = st.session_state["benutzer_id"]
     eid = eintrag["id"]
+    erledigt = bool(eintrag["erledigt"])
+    ueberfaellig = ist_ueberfaellig(eintrag)
 
     # Jedes Widget braucht einen eindeutigen key, sonst verwechselt
     # Streamlit die Checkboxen/Buttons der verschiedenen Einträge.
@@ -211,30 +261,43 @@ def eintrag_anzeigen(eintrag, kategorien, faecher):
         spalte_text, spalte_haken = st.columns([5, 1])
 
         with spalte_haken:
-            erledigt = st.checkbox("Erledigt", value=bool(eintrag["erledigt"]), key=f"erledigt_{eid}")
-        # Haken wurde geändert -> speichern und neu laden (Sortierung ändert sich)
-        if erledigt != bool(eintrag["erledigt"]):
-            db.eintrag_erledigt_setzen(eid, benutzer_id, erledigt)
-            st.rerun()
+            # on_change ruft erledigt_geaendert auf, bevor die Seite neu gezeichnet
+            # wird -> die Liste ist danach schon richtig sortiert
+            haken_key = f"{bereich}_erledigt_{eid}"
+            st.checkbox(
+                "Erledigt",
+                value=erledigt,
+                key=haken_key,
+                on_change=erledigt_geaendert,
+                args=(eid, haken_key),
+            )
 
         with spalte_text:
             titel = f"**{eintrag['titel']}** · {eintrag['kategorie']}"
-            st.markdown(f"~~{titel}~~" if erledigt else titel)  # ~~ = durchgestrichen
+            if erledigt:
+                st.markdown(f"~~{titel}~~")       # ~~ = durchgestrichen
+            elif ueberfaellig:
+                st.markdown(f":red[{titel}]")      # :red[...] = rote Schrift
+            else:
+                st.markdown(titel)
             if eintrag["fach"]:
                 st.markdown(fach_label(eintrag["fach"], eintrag["fach_farbe"]), unsafe_allow_html=True)
             if eintrag["deadline"]:
                 # 'JJJJ-MM-TT' -> 'TT.MM.JJJJ'
                 jahr, monat, tag = eintrag["deadline"].split("-")
-                st.caption(f"Fällig am {tag}.{monat}.{jahr}")
+                if ueberfaellig:
+                    st.badge(f"Überfällig seit {tag}.{monat}.{jahr}", icon="⚠️", color="red")
+                else:
+                    st.caption(f"Fällig am {tag}.{monat}.{jahr}")
             if eintrag["beschreibung"]:
                 st.write(eintrag["beschreibung"])
 
-        dokumente_bereich(eid)
+        dokumente_bereich(eid, bereich)
 
         with st.expander("Bearbeiten"):
             namen = list(kategorien.keys())
             fach_namen = list(faecher.keys())
-            with st.form(f"bearbeiten_{eid}"):
+            with st.form(f"{bereich}_bearbeiten_{eid}"):
                 neuer_titel = st.text_input("Titel", value=eintrag["titel"])
                 neue_kategorie = st.selectbox("Kategorie", namen, index=namen.index(eintrag["kategorie"]))
                 neues_fach = st.selectbox(
@@ -264,12 +327,12 @@ def eintrag_anzeigen(eintrag, kategorien, faecher):
                     )
                     st.rerun()
 
-            if st.button("Eintrag löschen", key=f"loeschen_{eid}", type="primary"):
+            if st.button("Eintrag löschen", key=f"{bereich}_loeschen_{eid}", type="primary"):
                 db.eintrag_loeschen(eid, benutzer_id)
                 st.rerun()
 
 
-def dokumente_bereich(eintrag_id):
+def dokumente_bereich(eintrag_id, bereich):
     """Aufklappbarer Bereich '📎 Dokumente (Anzahl)' mit Dateiliste und Upload."""
     benutzer_id = st.session_state["benutzer_id"]
     dokumente = db.dokumente_laden(eintrag_id, benutzer_id)
@@ -278,11 +341,11 @@ def dokumente_bereich(eintrag_id):
         if not dokumente:
             st.caption("Noch keine Dokumente.")
         for dokument in dokumente:
-            dokument_zeile(dokument)
+            dokument_zeile(dokument, bereich)
 
         # Eigenes Formular für den Upload, damit die Datei erst beim Klick
         # auf "Hochladen" gespeichert wird (und nicht bei jedem Neuladen)
-        with st.form(f"upload_{eintrag_id}", clear_on_submit=True):
+        with st.form(f"{bereich}_upload_{eintrag_id}", clear_on_submit=True):
             dateien = st.file_uploader("Dateien hinzufügen", accept_multiple_files=True)
             hochladen = st.form_submit_button("Hochladen")
 
@@ -311,7 +374,7 @@ def datei_oeffnen(pfad):
         subprocess.run(["xdg-open", pfad])
 
 
-def dokument_zeile(dokument):
+def dokument_zeile(dokument, bereich):
     """Eine Datei: Klick auf den Namen öffnet sie, daneben ein Entfernen-Button."""
     benutzer_id = st.session_state["benutzer_id"]
     did = dokument["id"]
@@ -320,14 +383,14 @@ def dokument_zeile(dokument):
 
     with spalte_name:
         # type="tertiary" = Button ohne Rahmen, sieht aus wie ein Link
-        if st.button(f"📎 {dokument['dateiname']}", key=f"oeffnen_{did}", type="tertiary"):
+        if st.button(f"📎 {dokument['dateiname']}", key=f"{bereich}_oeffnen_{did}", type="tertiary"):
             if os.path.exists(dokument["dateipfad"]):
                 datei_oeffnen(dokument["dateipfad"])
             else:
                 st.error("Die Datei fehlt im Ordner uploads/.")
 
     with spalte_loeschen:
-        if st.button("Entfernen", key=f"dokument_loeschen_{did}"):
+        if st.button("Entfernen", key=f"{bereich}_dokument_loeschen_{did}"):
             db.dokument_loeschen(did, benutzer_id)
             st.rerun()
 
