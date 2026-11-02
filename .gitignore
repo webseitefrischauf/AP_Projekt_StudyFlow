@@ -1,5 +1,5 @@
-# Datenbank & Uploads gehören nicht ins Git (sonst Merge-Konflikte)
-studyflow.db
+# Die Datenbank (studyflow.db) kommt bewusst mit ins Git, damit alle dieselben Daten haben.
+# Hochgeladene Dateien bleiben lokal.
 uploads/
 
 # Python
