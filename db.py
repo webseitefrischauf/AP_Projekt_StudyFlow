@@ -166,6 +166,59 @@ def benutzer_einloggen(email, passwort):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Kategorien
+# ---------------------------------------------------------------------------
+
+def kategorien_laden():
+    """Gibt alle Kategorien zurück (z.B. für ein Dropdown)."""
+    conn = verbindung()
+    kategorien = conn.execute("SELECT id, name FROM kategorie ORDER BY id").fetchall()
+    conn.close()
+    return kategorien
+
+
+# ---------------------------------------------------------------------------
+# Einträge
+# ---------------------------------------------------------------------------
+
+def eintrag_anlegen(benutzer_id, kategorie_id, titel, beschreibung=None, deadline=None):
+    """Speichert einen neuen Eintrag und gibt seine id zurück.
+
+    deadline ist ein Text im Format 'JJJJ-MM-TT' oder None.
+    """
+    conn = verbindung()
+    cursor = conn.execute(
+        "INSERT INTO eintrag (benutzer_id, kategorie_id, titel, beschreibung, deadline) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (benutzer_id, kategorie_id, titel, beschreibung, deadline),
+    )
+    conn.commit()
+    conn.close()
+    return cursor.lastrowid
+
+
+def eintraege_laden(benutzer_id):
+    """Gibt alle Einträge eines Benutzers zurück, nach Deadline sortiert.
+
+    Einträge ohne Deadline kommen ans Ende. Über den JOIN bekommt jede
+    Zeile zusätzlich den Namen der Kategorie (zeile["kategorie"]).
+    """
+    conn = verbindung()
+    eintraege = conn.execute(
+        """
+        SELECT eintrag.*, kategorie.name AS kategorie
+        FROM eintrag
+        JOIN kategorie ON kategorie.id = eintrag.kategorie_id
+        WHERE eintrag.benutzer_id = ?
+        ORDER BY eintrag.deadline IS NULL, eintrag.deadline
+        """,
+        (benutzer_id,),
+    ).fetchall()
+    conn.close()
+    return eintraege
+
+
 # Zum Testen direkt ausführen:  python db.py
 if __name__ == "__main__":
     init_db()

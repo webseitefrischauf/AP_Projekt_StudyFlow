@@ -62,8 +62,52 @@ def hauptseite():
             st.session_state["email"] = None
             st.rerun()
 
-    st.write("Trage deine To-dos ein")
-    st.info("Hier kommen als Nächstes die Einträge hin.")
+    benutzer_id = st.session_state["benutzer_id"]
+
+    # --- Neuer Eintrag ---
+    st.subheader("Neuer Eintrag")
+
+    # Dictionary {Name: id}, damit im Dropdown Namen stehen,
+    # wir aber die id speichern können
+    kategorien = {k["name"]: k["id"] for k in db.kategorien_laden()}
+
+    # clear_on_submit=True leert die Felder nach dem Speichern
+    with st.form("neuer_eintrag", clear_on_submit=True):
+        titel = st.text_input("Titel")
+        kategorie = st.selectbox("Kategorie", list(kategorien.keys()))
+        deadline = st.date_input("Deadline", value=None, format="DD.MM.YYYY")
+        beschreibung = st.text_area("Beschreibung (optional)")
+        abgeschickt = st.form_submit_button("Speichern")
+
+    if abgeschickt:
+        if not titel.strip():
+            st.error("Bitte einen Titel eingeben.")
+        else:
+            db.eintrag_anlegen(
+                benutzer_id,
+                kategorien[kategorie],
+                titel.strip(),
+                beschreibung.strip() or None,                # leerer Text -> None
+                deadline.isoformat() if deadline else None,  # Datum -> 'JJJJ-MM-TT'
+            )
+            st.success(f"„{titel.strip()}“ wurde gespeichert.")
+
+    # --- Meine Einträge ---
+    st.subheader("Meine Einträge")
+    eintraege = db.eintraege_laden(benutzer_id)
+
+    if not eintraege:
+        st.info("Du hast noch keine Einträge.")
+
+    for eintrag in eintraege:
+        with st.container(border=True):
+            st.markdown(f"**{eintrag['titel']}** · {eintrag['kategorie']}")
+            if eintrag["deadline"]:
+                # 'JJJJ-MM-TT' -> 'TT.MM.JJJJ'
+                jahr, monat, tag = eintrag["deadline"].split("-")
+                st.caption(f"Fällig am {tag}.{monat}.{jahr}")
+            if eintrag["beschreibung"]:
+                st.write(eintrag["beschreibung"])
 
 
 # Wer nicht eingeloggt ist, sieht nur die Login-Seite
