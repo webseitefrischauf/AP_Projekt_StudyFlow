@@ -12,6 +12,9 @@ Tabellen (siehe ER-Diagramm):
     dokument   – hochgeladene Dateien zu einem Eintrag
 """
 
+import hashlib
+import hmac
+import os
 import sqlite3
 
 # Name der Datenbank-Datei. Sie wird automatisch im Projektordner erstellt,
@@ -100,6 +103,67 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Benutzer
+# ---------------------------------------------------------------------------
+
+def _passwort_hashen(passwort, salt=None):
+    """Erzeugt einen Hash aus dem Passwort.
+
+    Das 'Salt' ist eine Zufallszahl pro Benutzer. Dadurch bekommen zwei
+    Benutzer mit demselben Passwort trotzdem unterschiedliche Hashes.
+    Gespeichert wird beides zusammen als 'salt$hash'.
+    """
+    if salt is None:
+        salt = os.urandom(16).hex()
+    hash_wert = hashlib.pbkdf2_hmac("sha256", passwort.encode(), salt.encode(), 100_000).hex()
+    return f"{salt}${hash_wert}"
+
+
+def benutzer_registrieren(email, passwort):
+    """Legt einen neuen Benutzer an.
+
+    Gibt die id des neuen Benutzers zurück,
+    oder None, wenn die E-Mail schon vergeben ist.
+    """
+    email = email.strip().lower()
+    conn = verbindung()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO benutzer (email, passwort_hash) VALUES (?, ?)",
+            (email, _passwort_hashen(passwort)),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        # UNIQUE bei email verletzt -> E-Mail gibt es schon
+        return None
+    finally:
+        conn.close()
+
+
+def benutzer_einloggen(email, passwort):
+    """Prüft E-Mail und Passwort.
+
+    Gibt die id des Benutzers zurück, wenn alles stimmt, sonst None.
+    """
+    email = email.strip().lower()
+    conn = verbindung()
+    zeile = conn.execute(
+        "SELECT id, passwort_hash FROM benutzer WHERE email = ?", (email,)
+    ).fetchone()
+    conn.close()
+
+    if zeile is None:
+        return None
+
+    # Das eingegebene Passwort mit demselben Salt hashen und vergleichen
+    salt = zeile["passwort_hash"].split("$")[0]
+    if hmac.compare_digest(_passwort_hashen(passwort, salt), zeile["passwort_hash"]):
+        return zeile["id"]
+    return None
 
 
 # Zum Testen direkt ausführen:  python db.py
