@@ -179,19 +179,65 @@ def kategorien_laden():
 
 
 # ---------------------------------------------------------------------------
+# Fächer
+# ---------------------------------------------------------------------------
+
+def fach_anlegen(benutzer_id, name, farbe=None):
+    """Legt ein neues Fach an.
+
+    Gibt die id des neuen Fachs zurück,
+    oder None, wenn der Benutzer schon ein Fach mit diesem Namen hat.
+    """
+    conn = verbindung()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO fach (benutzer_id, name, farbe) VALUES (?, ?, ?)",
+            (benutzer_id, name, farbe),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        # UNIQUE (benutzer_id, name) verletzt -> Fach gibt es schon
+        return None
+    finally:
+        conn.close()
+
+
+def faecher_laden(benutzer_id):
+    """Gibt alle Fächer eines Benutzers zurück, alphabetisch sortiert."""
+    conn = verbindung()
+    faecher = conn.execute(
+        "SELECT id, name, farbe FROM fach WHERE benutzer_id = ? ORDER BY name",
+        (benutzer_id,),
+    ).fetchall()
+    conn.close()
+    return faecher
+
+
+def fach_loeschen(fach_id, benutzer_id):
+    """Löscht ein Fach. Die Einträge bleiben erhalten,
+    ihr fach_id wird per ON DELETE SET NULL auf leer gesetzt."""
+    conn = verbindung()
+    conn.execute("DELETE FROM fach WHERE id = ? AND benutzer_id = ?", (fach_id, benutzer_id))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Einträge
 # ---------------------------------------------------------------------------
 
-def eintrag_anlegen(benutzer_id, kategorie_id, titel, beschreibung=None, deadline=None):
+def eintrag_anlegen(benutzer_id, kategorie_id, titel, beschreibung=None, deadline=None, fach_id=None):
     """Speichert einen neuen Eintrag und gibt seine id zurück.
 
     deadline ist ein Text im Format 'JJJJ-MM-TT' oder None.
+    fach_id ist die id eines Fachs oder None (kein Fach).
     """
     conn = verbindung()
     cursor = conn.execute(
-        "INSERT INTO eintrag (benutzer_id, kategorie_id, titel, beschreibung, deadline) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (benutzer_id, kategorie_id, titel, beschreibung, deadline),
+        "INSERT INTO eintrag (benutzer_id, kategorie_id, titel, beschreibung, deadline, fach_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (benutzer_id, kategorie_id, titel, beschreibung, deadline, fach_id),
     )
     conn.commit()
     conn.close()
@@ -202,21 +248,64 @@ def eintraege_laden(benutzer_id):
     """Gibt alle Einträge eines Benutzers zurück, nach Deadline sortiert.
 
     Einträge ohne Deadline kommen ans Ende. Über den JOIN bekommt jede
-    Zeile zusätzlich den Namen der Kategorie (zeile["kategorie"]).
+    Zeile zusätzlich den Namen der Kategorie (zeile["kategorie"]) und
+    Name und Farbe des Fachs (zeile["fach"], zeile["fach_farbe"]).
+
+    LEFT JOIN statt JOIN beim Fach: Einträge ohne Fach sollen trotzdem
+    mitkommen (fach und fach_farbe sind dann None).
     """
     conn = verbindung()
     eintraege = conn.execute(
         """
-        SELECT eintrag.*, kategorie.name AS kategorie
+        SELECT eintrag.*, kategorie.name AS kategorie,
+               fach.name AS fach, fach.farbe AS fach_farbe
         FROM eintrag
         JOIN kategorie ON kategorie.id = eintrag.kategorie_id
+        LEFT JOIN fach ON fach.id = eintrag.fach_id
         WHERE eintrag.benutzer_id = ?
-        ORDER BY eintrag.deadline IS NULL, eintrag.deadline
+        ORDER BY eintrag.erledigt, eintrag.deadline IS NULL, eintrag.deadline
         """,
         (benutzer_id,),
     ).fetchall()
     conn.close()
     return eintraege
+
+
+# Bei den folgenden Funktionen steht immer auch 'benutzer_id = ?' im WHERE.
+# So kann niemand fremde Einträge ändern, auch wenn er eine falsche id schickt.
+
+def eintrag_bearbeiten(eintrag_id, benutzer_id, kategorie_id, titel, beschreibung=None, deadline=None, fach_id=None):
+    """Überschreibt Titel, Kategorie, Beschreibung, Deadline und Fach eines Eintrags."""
+    conn = verbindung()
+    conn.execute(
+        "UPDATE eintrag SET kategorie_id = ?, titel = ?, beschreibung = ?, deadline = ?, fach_id = ? "
+        "WHERE id = ? AND benutzer_id = ?",
+        (kategorie_id, titel, beschreibung, deadline, fach_id, eintrag_id, benutzer_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def eintrag_erledigt_setzen(eintrag_id, benutzer_id, erledigt):
+    """Markiert einen Eintrag als erledigt (True) oder wieder offen (False)."""
+    conn = verbindung()
+    conn.execute(
+        "UPDATE eintrag SET erledigt = ? WHERE id = ? AND benutzer_id = ?",
+        (1 if erledigt else 0, eintrag_id, benutzer_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def eintrag_loeschen(eintrag_id, benutzer_id):
+    """Löscht einen Eintrag (seine Dokumente werden per CASCADE mitgelöscht)."""
+    conn = verbindung()
+    conn.execute(
+        "DELETE FROM eintrag WHERE id = ? AND benutzer_id = ?",
+        (eintrag_id, benutzer_id),
+    )
+    conn.commit()
+    conn.close()
 
 
 # Zum Testen direkt ausführen:  python db.py
