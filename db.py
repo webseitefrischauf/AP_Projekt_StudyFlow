@@ -21,6 +21,10 @@ import sqlite3
 # sobald init_db() zum ersten Mal aufgerufen wird.
 DB_DATEI = "studyflow.db"
 
+# Ordner für hochgeladene Dateien. In der Datenbank steht nur der Pfad,
+# die Datei selbst liegt hier.
+UPLOAD_ORDNER = "uploads"
+
 # Diese Kategorien werden beim ersten Start automatisch eingetragen.
 STANDARD_KATEGORIEN = ["Prüfung", "Abgabe", "To-do", "Präsentation"]
 
@@ -298,13 +302,119 @@ def eintrag_erledigt_setzen(eintrag_id, benutzer_id, erledigt):
 
 
 def eintrag_loeschen(eintrag_id, benutzer_id):
-    """Löscht einen Eintrag (seine Dokumente werden per CASCADE mitgelöscht)."""
+    """Löscht einen Eintrag samt seinen Dokumenten.
+
+    Die Zeilen in 'dokument' löscht SQLite per CASCADE automatisch,
+    die Dateien im Ordner uploads/ aber nicht -> die löschen wir selbst.
+    """
     conn = verbindung()
+    # Zuerst die Dateipfade merken, solange es die Zeilen noch gibt
+    pfade = [
+        zeile["dateipfad"]
+        for zeile in conn.execute(
+            "SELECT dokument.dateipfad FROM dokument "
+            "JOIN eintrag ON eintrag.id = dokument.eintrag_id "
+            "WHERE eintrag.id = ? AND eintrag.benutzer_id = ?",
+            (eintrag_id, benutzer_id),
+        )
+    ]
     conn.execute(
         "DELETE FROM eintrag WHERE id = ? AND benutzer_id = ?",
         (eintrag_id, benutzer_id),
     )
     conn.commit()
+    conn.close()
+    _dateien_entfernen(pfade)
+
+
+# ---------------------------------------------------------------------------
+# Dokumente
+# ---------------------------------------------------------------------------
+
+def _sicherer_dateiname(dateiname):
+    """Entfernt Ordnerangaben und Zeichen, die Windows in Dateinamen verbietet."""
+    dateiname = os.path.basename(dateiname)
+    for zeichen in '<>:"/\\|?*':
+        dateiname = dateiname.replace(zeichen, "_")
+    return dateiname
+
+
+def _dateien_entfernen(pfade):
+    """Löscht Dateien von der Festplatte (falls es sie noch gibt)."""
+    for pfad in pfade:
+        if os.path.exists(pfad):
+            os.remove(pfad)
+
+
+def dokument_speichern(eintrag_id, benutzer_id, dateiname, inhalt, dateityp=None):
+    """Speichert eine hochgeladene Datei zu einem Eintrag.
+
+    inhalt sind die Bytes der Datei. Die Datei landet als
+    'uploads/<dokument_id>_<dateiname>' im Upload-Ordner, damit zwei
+    Dateien mit gleichem Namen sich nicht überschreiben.
+
+    Gibt die id des Dokuments zurück, oder None, wenn der Eintrag
+    nicht diesem Benutzer gehört.
+    """
+    conn = verbindung()
+    try:
+        # Gehört der Eintrag wirklich diesem Benutzer?
+        gehoert_benutzer = conn.execute(
+            "SELECT 1 FROM eintrag WHERE id = ? AND benutzer_id = ?",
+            (eintrag_id, benutzer_id),
+        ).fetchone()
+        if gehoert_benutzer is None:
+            return None
+
+        # Erst die Zeile anlegen, um die id für den Dateinamen zu bekommen
+        cursor = conn.execute(
+            "INSERT INTO dokument (eintrag_id, dateiname, dateipfad, dateityp) VALUES (?, ?, '', ?)",
+            (eintrag_id, dateiname, dateityp),
+        )
+        dokument_id = cursor.lastrowid
+        dateipfad = os.path.join(UPLOAD_ORDNER, f"{dokument_id}_{_sicherer_dateiname(dateiname)}")
+
+        os.makedirs(UPLOAD_ORDNER, exist_ok=True)  # Ordner anlegen, falls es ihn nicht gibt
+        with open(dateipfad, "wb") as datei:        # "wb" = schreiben, binär (Bytes)
+            datei.write(inhalt)
+
+        conn.execute("UPDATE dokument SET dateipfad = ? WHERE id = ?", (dateipfad, dokument_id))
+        conn.commit()  # erst jetzt ist alles gespeichert
+        return dokument_id
+    except Exception:
+        conn.rollback()  # bei einem Fehler auch die halb angelegte Zeile verwerfen
+        raise
+    finally:
+        conn.close()
+
+
+def dokumente_laden(eintrag_id, benutzer_id):
+    """Gibt alle Dokumente eines Eintrags zurück (nur wenn er dem Benutzer gehört)."""
+    conn = verbindung()
+    dokumente = conn.execute(
+        "SELECT dokument.* FROM dokument "
+        "JOIN eintrag ON eintrag.id = dokument.eintrag_id "
+        "WHERE eintrag.id = ? AND eintrag.benutzer_id = ? "
+        "ORDER BY dokument.id",
+        (eintrag_id, benutzer_id),
+    ).fetchall()
+    conn.close()
+    return dokumente
+
+
+def dokument_loeschen(dokument_id, benutzer_id):
+    """Löscht ein Dokument: die Zeile in der Datenbank und die Datei."""
+    conn = verbindung()
+    zeile = conn.execute(
+        "SELECT dokument.dateipfad FROM dokument "
+        "JOIN eintrag ON eintrag.id = dokument.eintrag_id "
+        "WHERE dokument.id = ? AND eintrag.benutzer_id = ?",
+        (dokument_id, benutzer_id),
+    ).fetchone()
+    if zeile is not None:
+        conn.execute("DELETE FROM dokument WHERE id = ?", (dokument_id,))
+        conn.commit()
+        _dateien_entfernen([zeile["dateipfad"]])
     conn.close()
 
 

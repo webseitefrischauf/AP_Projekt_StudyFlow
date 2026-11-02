@@ -1,4 +1,7 @@
 import html
+import os
+import subprocess
+import sys
 from datetime import date
 
 import streamlit as st
@@ -130,13 +133,15 @@ def neuer_eintrag_seite():
         fach = st.selectbox("Fach", list(faecher.keys()))
         deadline = st.date_input("Deadline", value=None, format="DD.MM.YYYY")
         beschreibung = st.text_area("Beschreibung (optional)")
+        # accept_multiple_files=True -> man kann mehrere Dateien auf einmal wählen
+        dateien = st.file_uploader("Dokumente (optional)", accept_multiple_files=True)
         abgeschickt = st.form_submit_button("Speichern")
 
     if abgeschickt:
         if not titel.strip():
             st.error("Bitte einen Titel eingeben.")
         else:
-            db.eintrag_anlegen(
+            eintrag_id = db.eintrag_anlegen(
                 benutzer_id,
                 kategorien[kategorie],
                 titel.strip(),
@@ -144,6 +149,9 @@ def neuer_eintrag_seite():
                 deadline.isoformat() if deadline else None,  # Datum -> 'JJJJ-MM-TT'
                 faecher[fach],                               # "kein Fach" -> None
             )
+            # datei.getvalue() = Inhalt als Bytes, datei.type = z.B. 'application/pdf'
+            for datei in dateien:
+                db.dokument_speichern(eintrag_id, benutzer_id, datei.name, datei.getvalue(), datei.type)
             st.success(f"„{titel.strip()}“ wurde gespeichert. Du findest ihn im Dashboard.")
 
 
@@ -221,6 +229,8 @@ def eintrag_anzeigen(eintrag, kategorien, faecher):
             if eintrag["beschreibung"]:
                 st.write(eintrag["beschreibung"])
 
+        dokumente_bereich(eid)
+
         with st.expander("Bearbeiten"):
             namen = list(kategorien.keys())
             fach_namen = list(faecher.keys())
@@ -257,6 +267,69 @@ def eintrag_anzeigen(eintrag, kategorien, faecher):
             if st.button("Eintrag löschen", key=f"loeschen_{eid}", type="primary"):
                 db.eintrag_loeschen(eid, benutzer_id)
                 st.rerun()
+
+
+def dokumente_bereich(eintrag_id):
+    """Aufklappbarer Bereich '📎 Dokumente (Anzahl)' mit Dateiliste und Upload."""
+    benutzer_id = st.session_state["benutzer_id"]
+    dokumente = db.dokumente_laden(eintrag_id, benutzer_id)
+
+    with st.expander(f"📎 Dokumente ({len(dokumente)})"):
+        if not dokumente:
+            st.caption("Noch keine Dokumente.")
+        for dokument in dokumente:
+            dokument_zeile(dokument)
+
+        # Eigenes Formular für den Upload, damit die Datei erst beim Klick
+        # auf "Hochladen" gespeichert wird (und nicht bei jedem Neuladen)
+        with st.form(f"upload_{eintrag_id}", clear_on_submit=True):
+            dateien = st.file_uploader("Dateien hinzufügen", accept_multiple_files=True)
+            hochladen = st.form_submit_button("Hochladen")
+
+        if hochladen:
+            if not dateien:
+                st.error("Bitte zuerst eine Datei auswählen.")
+            else:
+                for datei in dateien:
+                    db.dokument_speichern(eintrag_id, benutzer_id, datei.name, datei.getvalue(), datei.type)
+                st.rerun()
+
+
+def datei_oeffnen(pfad):
+    """Öffnet eine Datei mit dem Standardprogramm des Computers
+    (PDF -> PDF-Reader, .docx -> Word, ...).
+
+    Funktioniert, weil die App lokal läuft: Streamlit und die Datei sind auf
+    demselben PC wie der Browser.
+    """
+    pfad = os.path.abspath(pfad)
+    if sys.platform == "win32":         # Windows
+        os.startfile(pfad)
+    elif sys.platform == "darwin":      # Mac
+        subprocess.run(["open", pfad])
+    else:                               # Linux
+        subprocess.run(["xdg-open", pfad])
+
+
+def dokument_zeile(dokument):
+    """Eine Datei: Klick auf den Namen öffnet sie, daneben ein Entfernen-Button."""
+    benutzer_id = st.session_state["benutzer_id"]
+    did = dokument["id"]
+
+    spalte_name, spalte_loeschen = st.columns([5, 1])
+
+    with spalte_name:
+        # type="tertiary" = Button ohne Rahmen, sieht aus wie ein Link
+        if st.button(f"📎 {dokument['dateiname']}", key=f"oeffnen_{did}", type="tertiary"):
+            if os.path.exists(dokument["dateipfad"]):
+                datei_oeffnen(dokument["dateipfad"])
+            else:
+                st.error("Die Datei fehlt im Ordner uploads/.")
+
+    with spalte_loeschen:
+        if st.button("Entfernen", key=f"dokument_loeschen_{did}"):
+            db.dokument_loeschen(did, benutzer_id)
+            st.rerun()
 
 
 # Wer nicht eingeloggt ist, sieht nur die Login-Seite
