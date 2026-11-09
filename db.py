@@ -257,22 +257,42 @@ def eintraege_laden(benutzer_id):
 
     LEFT JOIN statt JOIN beim Fach: Einträge ohne Fach sollen trotzdem
     mitkommen (fach und fach_farbe sind dann None).
+
+    zeile["anzahl_dokumente"] zählt die Dokumente des Eintrags (Unterabfrage).
     """
     conn = verbindung()
     eintraege = conn.execute(
-        """
-        SELECT eintrag.*, kategorie.name AS kategorie,
-               fach.name AS fach, fach.farbe AS fach_farbe
-        FROM eintrag
-        JOIN kategorie ON kategorie.id = eintrag.kategorie_id
-        LEFT JOIN fach ON fach.id = eintrag.fach_id
-        WHERE eintrag.benutzer_id = ?
-        ORDER BY eintrag.erledigt, eintrag.deadline IS NULL, eintrag.deadline
-        """,
+        _EINTRAG_SELECT
+        + "WHERE eintrag.benutzer_id = ? "
+        + "ORDER BY eintrag.erledigt, eintrag.deadline IS NULL, eintrag.deadline",
         (benutzer_id,),
     ).fetchall()
     conn.close()
     return eintraege
+
+
+def eintrag_laden(eintrag_id, benutzer_id):
+    """Gibt einen einzelnen Eintrag zurück (mit denselben Zusatzspalten
+    wie eintraege_laden), oder None, wenn er nicht diesem Benutzer gehört."""
+    conn = verbindung()
+    eintrag = conn.execute(
+        _EINTRAG_SELECT + "WHERE eintrag.id = ? AND eintrag.benutzer_id = ?",
+        (eintrag_id, benutzer_id),
+    ).fetchone()
+    conn.close()
+    return eintrag
+
+
+# Gemeinsamer Anfang der Abfrage für eintraege_laden und eintrag_laden.
+# Die Funktionen hängen nur noch ihr eigenes WHERE (und ORDER BY) an.
+_EINTRAG_SELECT = """
+    SELECT eintrag.*, kategorie.name AS kategorie,
+           fach.name AS fach, fach.farbe AS fach_farbe,
+           (SELECT COUNT(*) FROM dokument WHERE dokument.eintrag_id = eintrag.id) AS anzahl_dokumente
+    FROM eintrag
+    JOIN kategorie ON kategorie.id = eintrag.kategorie_id
+    LEFT JOIN fach ON fach.id = eintrag.fach_id
+"""
 
 
 # Bei den folgenden Funktionen steht immer auch 'benutzer_id = ?' im WHERE.

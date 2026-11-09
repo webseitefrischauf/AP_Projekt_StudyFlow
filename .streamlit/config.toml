@@ -1,0 +1,17 @@
+# Design von StudyFlow. Streamlit liest diese Datei beim Start automatisch.
+# Nach einer Änderung hier Streamlit neu starten.
+
+[theme]
+base = "light"
+primaryColor = "#6C5CE7"                 # Akzentfarbe: Buttons, Links, aktive Reiter
+backgroundColor = "#F7F7FB"              # Hintergrund der Seite
+secondaryBackgroundColor = "#EEEDF7"     # Hintergrund von Eingabefeldern
+textColor = "#1F2333"
+borderColor = "#E4E3EE"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
+baseRadius = "12px"                      # abgerundete Ecken überall
+showWidgetBorder = true
+
+[theme.sidebar]
+backgroundColor = "#FFFFFF"              # Sidebar weiß
+secondaryBackgroundColor = "#EEEDF7"
